@@ -78,6 +78,43 @@ if menu == "뉴스룸":
         if date_str in news_data:
             daily_news = news_data[date_str]
             
+            # 디버깅: image_path 확인
+            if 'image_path' in daily_news:
+                st.info(f"🔍 디버깅: image_path = {daily_news['image_path']}")
+            
+            # 인포그래픽 표시 (있는 경우)
+            if 'image_path' in daily_news and daily_news['image_path']:
+                try:
+                    # GitHub에서 직접 이미지 가져오기
+                    image_bytes = db.load_image(daily_news['image_path'])
+                    if image_bytes:
+                        from PIL import Image
+                        import io
+                        image = Image.open(io.BytesIO(image_bytes))
+                        st.image(image, use_container_width=True, caption=f"📊 {date_str} 인포그래픽")
+                        st.divider()
+                    else:
+                        # Fallback: GitHub Raw URL 시도
+                        try:
+                            image_url = f"https://raw.githubusercontent.com/{REPO_NAME}/main/{daily_news['image_path']}"
+                            st.info(f"🔍 Raw URL 시도: {image_url}")
+                            st.image(image_url, use_container_width=True, caption=f"📊 {date_str} 인포그래픽")
+                            st.divider()
+                        except Exception as url_error:
+                            st.warning(f"⚠️ 인포그래픽을 불러올 수 없습니다.")
+                            with st.expander("🔍 디버깅 정보"):
+                                st.write(f"이미지 경로: {daily_news['image_path']}")
+                                st.write(f"Raw URL: https://raw.githubusercontent.com/{REPO_NAME}/main/{daily_news['image_path']}")
+                                st.write(f"오류: {str(url_error)}")
+                except Exception as e:
+                    st.warning(f"인포그래픽 로드 실패: {e}")
+                    # 디버깅 정보 표시
+                    with st.expander("🔍 디버깅 정보"):
+                        st.write(f"이미지 경로: {daily_news.get('image_path', '없음')}")
+                        st.write(f"오류: {str(e)}")
+                        import traceback
+                        st.code(traceback.format_exc())
+            
             # 전체 요약 표시
             st.header(f"📅 {date_str} 주요 브리핑")
             
@@ -251,12 +288,50 @@ elif menu == "대시보드":
                                 from utils_ai import analyze_news_with_gemini
                                 result = analyze_news_with_gemini(news_list, GEMINI_KEY)
                             
-                            progress_bar.progress(80)
+                            progress_bar.progress(60)
                             detail_text.success(f"✅ AI 분석 완료! (경과 시간: {int(time.time() - start_time)}초)")
                             time_text.text(f"경과 시간: {int(time.time() - start_time)}초")
                             
-                            # 3. news_data.json에 오늘 날짜 Key로 저장
-                            status_text.markdown("**3단계: 💾 데이터를 저장하는 중...**")
+                            # 3. 인포그래픽 생성 (선택적)
+                            image_path = None
+                            if result.get('summary'):
+                                status_text.markdown("**3단계: 🎨 인포그래픽 생성 중...**")
+                                detail_text.info("AI가 인포그래픽을 생성하고 있습니다...")
+                                progress_bar.progress(70)
+                                
+                                try:
+                                    from utils_ai import generate_infographic
+                                    # 키워드도 함께 전달 (대체 방법에서 사용)
+                                    keywords = result.get('keywords', [])
+                                    # Imagen API 키 가져오기 (선택적)
+                                    IMAGEN_KEY = st.secrets.get("api", {}).get("imagen_key", None)
+                                    infographic_image = generate_infographic(
+                                        GEMINI_KEY, 
+                                        result.get('summary', ''),
+                                        IMAGEN_KEY,
+                                        keywords
+                                    )
+                                    
+                                    if infographic_image:
+                                        today = datetime.date.today()
+                                        today_str = today.strftime("%Y-%m-%d")
+                                        # 년도/월별 폴더 구조로 저장 (예: images/2025/12/2025-12-06.png)
+                                        year = today.strftime("%Y")
+                                        month = today.strftime("%m")
+                                        image_path = f"images/{year}/{month}/{today_str}.png"
+                                        
+                                        if db.save_image(image_path, infographic_image, f"Create infographic for {today_str}"):
+                                            detail_text.success(f"✅ 인포그래픽 생성 완료!")
+                                            result['image_path'] = image_path
+                                        else:
+                                            detail_text.warning("⚠️ 인포그래픽 저장 실패 (분석은 완료됨)")
+                                    else:
+                                        detail_text.info("ℹ️ 인포그래픽 생성 건너뜀 (Imagen API 미활성화 또는 오류)")
+                                except Exception as e:
+                                    detail_text.warning(f"⚠️ 인포그래픽 생성 중 오류: {e} (분석은 완료됨)")
+                            
+                            # 4. news_data.json에 오늘 날짜 Key로 저장
+                            status_text.markdown("**4단계: 💾 데이터를 저장하는 중...**")
                             detail_text.info("GitHub에 데이터를 저장하고 있습니다...")
                             progress_bar.progress(90)
                             
